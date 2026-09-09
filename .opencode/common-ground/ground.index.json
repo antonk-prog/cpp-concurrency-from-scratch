@@ -1,0 +1,139 @@
+{
+  "version": "1.0",
+  "project_id": "local/.opencode/common-ground",
+  "project_name": "cpp-concurrency-from-scratch",
+  "created": "2026-09-08T13:02:54Z",
+  "last_updated": "2026-09-09T14:50:00Z",
+  "last_validated": "2026-09-08T14:35:00Z",
+  "ground_file": ".opencode/common-ground/COMMON-GROUND.md",
+  "next_id": 22,
+  "assumptions": [
+    {
+      "id": 1,
+      "title": "База курса",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 2,
+      "title": "Стандарт C++17 / материал книги",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 3,
+      "title": "Аудитория",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 4,
+      "title": "Memory ordering / lock-free",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 5,
+      "title": "Язык",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 6,
+      "title": "Антиплагиат",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 7,
+      "title": "Нет интерактива lab.py",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 8,
+      "title": "Антиспойлер в task.md",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 9,
+      "title": "Без capstone",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 10,
+      "title": "Листинги из ccia_code_samples",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 11,
+      "title": "Полные пояснения новому",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 12,
+      "title": "Акценты лектора",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 13,
+      "title": "Листинги в лекциях vs в остальных файлах",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 14,
+      "title": "Отчёт об объёме лекции",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 15,
+      "title": "Рисунки из книги",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 16,
+      "title": "Без упоминаний книги и автора",
+      "tier": "ESTABLISHED",
+      "type": "stated"
+    },
+    {
+      "id": 17,
+      "title": "Две подсказки",
+      "tier": "WORKING",
+      "type": "assumed"
+    },
+    {
+      "id": 18,
+      "title": "Минимум одна кодовая лаба",
+      "tier": "WORKING",
+      "type": "assumed"
+    },
+    {
+      "id": 19,
+      "title": "Объём лекции",
+      "tier": "OPEN",
+      "type": "assumed"
+    },
+    {
+      "id": 20,
+      "title": "Количество лаб",
+      "tier": "OPEN",
+      "type": "assumed"
+    },
+    {
+      "id": 21,
+      "title": "Инициализация git",
+      "tier": "OPEN",
+      "type": "uncertain"
+    }
+  ],
+  "archived": []
+}

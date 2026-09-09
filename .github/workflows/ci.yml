@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  structure:
+    name: Каноническая структура и шапки task.md
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Проверка структуры
+        run: python3 .github/scripts/check_structure.py
+
+  build:
+    name: Сборка и запуск (${{ matrix.cxx }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++, clang++]
+    env:
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Собрать и запустить все .cpp (starter + solution)
+        run: |
+          set -uo pipefail
+          set +e  # собираем всё, ошибки копим и отчётываем в конце
+          fail=0
+          while IFS= read -r -d '' cpp; do
+            bin="/tmp/bin_$(echo "$cpp" | tr '/' '_')"
+            echo "::group::build $cpp"
+            if ! "$CXX" -std=c++17 -pthread -Wall -Wextra "$cpp" -o "$bin"; then
+              echo "::error::BUILD FAILED: $cpp"
+              fail=1
+            fi
+            echo "::endgroup::"
+            if [ -f "$bin" ]; then
+              echo "::group::run $cpp"
+              if ! timeout 60 "$bin" >/tmp/run.log 2>&1; then
+                echo "::error::RUN FAILED (non-zero exit или timeout): $cpp"
+                tail -n 20 /tmp/run.log
+                fail=1
+              fi
+              echo "::endgroup::"
+            fi
+          done < <(find modules -type f -name '*.cpp' -print0)
+
+          exit $fail
+
+  tsan:
+    name: ThreadSanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: solutions — чисто; starter «найди и почини» — баг ловится
+        run: |
+          set -uo pipefail
+          set +e
+          fail=0
+          while IFS= read -r -d '' labdir; do
+            labtype=$(grep -m1 '^Тип:' "$labdir/task.md" 2>/dev/null | sed 's/^Тип: *//')
+            if [ "$labtype" = "найди и почини" ]; then
+              echo "::group::tsan (ожидаем баг): $labdir"
+              srcs=$(find "$labdir/starter" -name '*.cpp' | tr '\n' ' ')
+              g++ -std=c++17 -pthread -fsanitize=thread -g $srcs -o /tmp/tsan_bad
+              timeout 120 /tmp/tsan_bad >/tmp/tsan_bad.log 2>&1
+              if ! grep -q 'ThreadSanitizer' /tmp/tsan_bad.log; then
+                echo "::error::TSan НЕ поймал заложенный баг: $labdir/starter"
+                fail=1
+              else
+                echo "OK: баг ловится"
+              fi
+              echo "::endgroup::"
+            else
+              echo "::group::tsan (ожидаем чистоту): $labdir"
+              g++ -std=c++17 -pthread -fsanitize=thread -g \
+                  "$labdir/solution/solution.cpp" -o /tmp/tsan_sol
+              timeout 120 /tmp/tsan_sol >/tmp/tsan_sol.log 2>&1
+              if grep -q 'ThreadSanitizer' /tmp/tsan_sol.log; then
+                echo "::error::TSan нашёл проблемы в РЕШЕНИИ: $labdir/solution"
+                grep -m 5 'ThreadSanitizer' /tmp/tsan_sol.log
+                fail=1
+              else
+                echo "OK: решение чистое"
+              fi
+              echo "::endgroup::"
+            fi
+          done < <(find modules -type d -path '*/labs/lab-*' -print0)
+          exit $fail
