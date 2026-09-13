@@ -17,6 +17,7 @@ public:
     explicit X(int v) : detail_(v) {}
 
     int get() const {
+        std::lock_guard<std::mutex> guard(m_);
         return detail_.value;
     }
 
@@ -34,9 +35,8 @@ private:
     mutable std::mutex m_;
 };
 
-// TODO: в main допиши два потока, которые много раз вызывают swap
-// с переставленными аргументами (swap(a, b) и swap(b, a)) — в плохой
-// версии это приводит к deadlock. После join() программа завершается.
+// TODO: в main сценарий уже готов — два потока многократно вызывают swap
+// с переставленными аргументами. Дописывать в main ничего не нужно.
 
 int main() {
     X a(1), b(2);

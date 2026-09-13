@@ -1,4 +1,3 @@
-#include <atomic>
 #include <iostream>
 #include <map>
 #include <shared_mutex>
@@ -38,7 +37,7 @@ int main() {
     const int writer_keys = 500;
     const int reader_iters = 1000;
 
-    std::atomic<bool> mismatch{false};
+    std::vector<int> reader_mismatch(readers_count, 0);
 
     std::vector<std::thread> threads;
     for (int w = 0; w < writers_count; ++w) {
@@ -52,7 +51,8 @@ int main() {
     }
 
     for (int r = 0; r < readers_count; ++r) {
-        threads.emplace_back([&cache, &mismatch, &base_names] {
+        threads.emplace_back([&cache, &reader_mismatch, &base_names, r] {
+            int mismatch = 0;
             for (int i = 0; i < reader_iters; ++i) {
                 std::string name;
                 std::string expected;
@@ -68,24 +68,28 @@ int main() {
                 }
                 std::string value = cache.find(name);
                 if (!value.empty() && value != expected) {
-                    mismatch.store(true);
+                    ++mismatch;
                 }
             }
+            reader_mismatch[r] = mismatch;
         });
     }
     for (auto& t : threads) t.join();
+
+    int mismatch = 0;
+    for (int m : reader_mismatch) mismatch += m;
 
     for (int w = 0; w < writers_count; ++w) {
         for (int i = 0; i < writer_keys; ++i) {
             std::string name = "host" + std::to_string(w * writer_keys + i);
             std::string expected = "10.0.1." + std::to_string(w * 100 + i);
             if (cache.find(name) != expected) {
-                mismatch.store(true);
+                ++mismatch;
             }
         }
     }
 
-    if (mismatch.load()) {
+    if (mismatch != 0) {
         std::cout << "Checks failed\n";
         return 1;
     }

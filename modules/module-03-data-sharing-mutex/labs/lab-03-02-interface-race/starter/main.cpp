@@ -34,11 +34,6 @@ public:
         data_.pop();
     }
 
-    bool empty() const {
-        std::lock_guard<std::mutex> guard(m_);
-        return data_.empty();
-    }
-
 private:
     std::stack<T> data_;
     mutable std::mutex m_;

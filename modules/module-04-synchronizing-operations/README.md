@@ -1253,8 +1253,8 @@ if (f.wait_for(std::chrono::milliseconds(35)) == std::future_status::ready) {
 
 ## Лаборатории модуля
 
-| Лаба | Тип | Сложность | Суть одной строкой |
-|------|-----|-----------|--------------------|
-| [4.1. Производитель-потребитель](labs/lab-04-01-producer-consumer/task.md) | допиши TODO | средняя | потокобезопасная очередь с `condition_variable`: `wait` с предикатом и `notify_one` |
-| [4.2. Параллельная сумма через async](labs/lab-04-02-async-parallel-sum/task.md) | напиши с нуля | базовая | разбей диапазон на блоки, запусти `std::async`, собери через `future.get()` |
-| [4.3. Почини broken_promise](labs/lab-04-03-promise-exception/task.md) | найди и почини | средняя | гарантируй установку значения/исключения в `std::promise` на всех путях |
+| Лаба | Тип | Суть одной строкой |
+|------|-----|--------------------|
+| [4.1. Производитель-потребитель](labs/lab-04-01-producer-consumer/task.md) | допиши TODO | потокобезопасная очередь с `condition_variable`: `wait` с предикатом и `notify_one` |
+| [4.2. Параллельная сумма через async](labs/lab-04-02-async-parallel-sum/task.md) | напиши с нуля | разбей диапазон на блоки, запусти `std::async`, собери через `future.get()` |
+| [4.3. Почини broken_promise](labs/lab-04-03-promise-exception/task.md) | найди и почини | гарантируй установку значения/исключения в `std::promise` на всех путях |

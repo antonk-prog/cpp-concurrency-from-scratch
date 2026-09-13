@@ -1227,8 +1227,8 @@ public:
 
 ## Лаборатории модуля
 
-| Лаба | Тип | Сложность | Суть одной строкой |
-|------|-----|-----------|--------------------|
-| [6.1. Почини гонку в очереди с детализацией](labs/lab-06-01-fine-grained-queue/task.md) | найди и почини | средняя | исправь `get_tail()` вне блокировки `head_mutex` — head «перескакивает» за tail |
-| [6.2. Потокобезопасная поисковая таблица](labs/lab-06-02-threadsafe-lookup-table/task.md) | допиши TODO | сложная | допиши методы бакета `value_for`/`add_or_update_mapping`/`remove_mapping` на `shared_mutex` |
-| [6.3. Список с эстафетной блокировкой](labs/lab-06-03-threadsafe-list/task.md) | напиши с нуля | сложная | реализуй `for_each`/`find_first_if`/`remove_if` с мьютексом на узел |
+| Лаба | Тип | Суть одной строкой |
+|------|-----|--------------------|
+| [6.1. Почини гонку в очереди с детализацией](labs/lab-06-01-fine-grained-queue/task.md) | найди и почини | исправь `get_tail()` вне блокировки `head_mutex` — head «перескакивает» за tail |
+| [6.2. Потокобезопасная поисковая таблица](labs/lab-06-02-threadsafe-lookup-table/task.md) | допиши TODO | допиши методы бакета `value_for`/`add_or_update_mapping`/`remove_mapping` на `shared_mutex` |
+| [6.3. Список с эстафетной блокировкой](labs/lab-06-03-threadsafe-list/task.md) | напиши с нуля | реализуй `for_each`/`find_first_if`/`remove_if` с мьютексом на узел |

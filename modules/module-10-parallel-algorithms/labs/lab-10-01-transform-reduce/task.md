@@ -1,4 +1,4 @@
-# Лаба 10.1. Подсчёт посещений через transform_reduce — средняя
+# Лаба 10.1. Подсчёт посещений через transform_reduce
 Модуль: 10. Алгоритмы параллельных вычислений
 Тип: напиши с нуля
 
@@ -42,14 +42,7 @@ TODO — `combine_visits` и `count_visits_per_page`).
 g++ -std=c++17 -pthread -Wall -Wextra main.cpp -o visits
 ```
 
-## Чеклист самопроверки
+## Решение
 
-- Все четыре перегрузки `combine_visits` реализованы.
-- Сведение идёт по меньшей карте (swap перед обходом).
-- Результат `transform_reduce` равен эталонному (проверка в `main`).
-- TSan чист.
-
-## Подсказки и решение
-
-Смотри `hints/hint-1.md` и `hints/hint-2.md`, затем `solution/` — эталонная
-реализация.
+Готовое решение — в `solution/solution.cpp` и `solution/solution.md`.
+Грабли — в `pitfalls.md`.
