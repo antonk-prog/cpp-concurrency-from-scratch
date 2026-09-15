@@ -187,17 +187,22 @@ public:
         data_queue.pop();
         return res;
     }
-
-    bool empty() const {
-        std::lock_guard<std::mutex> lk(mut);
-        return data_queue.empty();
-    }
 };
 ```
 
-Обрати внимание на `mutable std::mutex`: мьютекс блокируется в `empty() const`
-и в копирующем конструкторе — блокировка не меняет логическое состояние, поэтому
-поле помечено `mutable` (мы уже видели этот приём в главе 3).
+Обрати внимание: метода `empty()` у очереди **нет** — и это осознанно. Любая
+проверка «пусто/не пусто», сделанная в одном потоке, устаревает уже к моменту
+возврата: пока она отдаёт результат, другой поток может положить или забрать
+элемент. Строить на ней логику (`if (!q.empty()) q.pop()`) нельзя — это
+классическая гонка «проверил — потом использовал» (TOCTOU, time-of-check to
+time-of-use): между проверкой и действием состояние меняется, и код либо
+падает, либо теряет данные. Поэтому очередь предоставляет только атомарные с
+точки зрения вызывающего операции: `try_pop` и `wait_and_pop`, которые
+проверку и извлечение делают под одной блокировкой.
+
+Про `mutable std::mutex`: мьютекс блокируется в копирующем конструкторе, где
+параметр приходит как `const&`, — сама блокировка логическое состояние не
+меняет, поэтому поле помечено `mutable` (мы уже видели этот приём в главе 3).
 
 `notify_one()` при `push` будит один поток-потребитель. Если потребителей
 несколько и каждый обрабатывает свою порцию данных, `notify_one` достаточно:
@@ -389,6 +394,15 @@ try {
 а `std::make_exception_ptr(std::logic_error("foo"))` создаёт исключение напрямую
 без блока `try` — читается яснее.
 
+**Совет: поиграйся.** Прежде чем идти дальше, возьми и напиши три маленькие
+программы — по одной на `std::async`, `std::packaged_task` и `std::promise`.
+В каждой получи фьючерс, заберёшь результат через `get()` и отдельно попробуй
+«положить» исключение. Это по-настоящему весело: своими руками видно, кто и в
+какой момент делает фьючерс готовым, чем три способа отличаются друг от друга
+и почему `async` вызывает функцию сам, `packaged_task` — когда его позовут,
+а `promise` ждёт, пока ты вручную вызовешь `set_value`. Пара таких опытов
+проясняет всю тему лучше любого текста.
+
 **`std::shared_future`** — для ожидания одного события из нескольких потоков.
 У каждого потока должна быть собственная копия `shared_future`, тогда доступ
 безопасен без дополнительных мьютексов. Получается из `std::future` через
@@ -479,23 +493,16 @@ bool wait_loop() {
 есть `wait_for`/`wait_until`, возвращающие `std::future_status`:
 `ready` (готов), `timeout` (истёк), `deferred` (задача отложена).
 
-### Подходы к организации синхронизации
+### Пример: параллельная быстрая сортировка на фьючерсах
 
-Глава 4 — это ещё и три способа **мыслить** о конкурентности, которые упрощают
-код. Их важно понимать, даже если в повседневной работе используются более
-низкоуровневые примитивы.
+Покажем, как фьючерсы позволяют распараллелить рекурсивный алгоритм почти
+без изменения его структуры. Идея — держать функции «чистыми»: если результат
+зависит только от аргументов и нет разделяемого изменяемого состояния, разные
+вызовы можно смело выполнять параллельно, и мьютексы не нужны. Быстрая
+сортировка ложится в эту схему идеально: две половины массива сортируются
+независимо друг от друга.
 
-#### Функциональный стиль (FP)
-
-В функциональном программировании результат функции зависит только от её
-аргументов и не зависит от внешнего состояния — у чистой функции нет побочных
-эффектов, кроме возвращаемого значения. В конкурентном коде это золото: если
-потоки не разделяют изменяемое состояние, нет и гонок, и мьютексы не нужны.
-C++ поддерживает такой стиль, а фьючерсы завершают картину: результат одного
-вычисления можно передать другому через фьючерс, не обращаясь к общей памяти.
-
-Пример — быстрая сортировка в FP-стиле. Сначала последовательная
-версия на `std::list`:
+Сначала последовательная версия на `std::list`:
 
 #### Листинг 4.12. Последовательная реализация Quicksort
 
@@ -549,612 +556,8 @@ std::list<T> parallel_quick_sort(std::list<T> input) {
 результата фоновой сортировки. Так фьючерсы позволяют строить рекурсивный
 параллелизм почти без изменения структуры кода.
 
-#### Рисунок 4.2. Рекурсивная сортировка в FP-стиле
+#### Рисунок 4.2. Рекурсивная параллельная сортировка на фьючерсах
 ![рис. 4.2](../../source/images/4.2.png)
-
-#### Передача сообщений (CSP)
-
-Другой способ убрать общую память — **передача сообщений** (Communicating
-Sequential Processes, CSP). Потоки концептуально полностью изолированы и
-общаются только через каналы сообщений. Каждый поток — это конечный автомат:
-получил сообщение — обновил состояние — возможно, отправил сообщения дальше.
-Такую модель используют Erlang и MPI. В C++ нет встроенных каналов, но очередь
-сообщений легко построить самому (это и есть наша `threadsafe_queue`), а
-ответственность «не разделять данные» берёт на себя программист.
-
-#### Рисунок 4.3. Модель простого конечного автомата для банкомата
-
-![рис. 4.3](../../source/images/4.3.png)
-
-Пример — логика банкомата: поток ждёт сообщения «карта вставлена»,
-потом «цифра ПИН-кода», «проверить ПИН», «выбрана сумма», «подтверждение из
-банка» и т.д. Каждое состояние — метод, который ждёт допустимые сообщения и
-переходит в следующее состояние. Такой стиль (акторы) разгружает от забот о
-синхронизации: надо лишь думать, какие сообщения можно получить в этом месте.
-
-Логика банкомата моделируется как конечный автомат, а поток — это цикл,
-вызывающий функцию текущего состояния. Каждое состояние ждёт допустимый набор
-сообщений через `incoming.wait().handle<ТипСообщения>(обработчик)` и меняет
-`state` на следующее состояние (листинг 4.15 — первое состояние «ждём карту»
-и главный цикл):
-
-#### Листинг 4.15. Простая реализация класса логики банкомата
-
-```cpp
-class atm {
-    messaging::receiver incoming;
-    messaging::sender bank;
-    messaging::sender interface_hardware;
-    void (atm::*state)();
-    std::string account;
-    std::string pin;
-
-    void waiting_for_card() {
-        interface_hardware.send(display_enter_card());
-        incoming.wait()
-            .handle<card_inserted>(
-                [&](card_inserted const& msg) {
-                    account = msg.account;
-                    pin = "";
-                    interface_hardware.send(display_enter_pin());
-                    state = &atm::getting_pin;
-                });
-    }
-
-    void getting_pin();
-
-public:
-    void run() {
-        state = &atm::waiting_for_card;
-        try {
-            for (;;) {
-                (this->*state)();   // выполнить функцию текущего состояния
-            }
-        } catch (messaging::close_queue const&) {
-        }
-    }
-};
-```
-
-`messaging::receiver`/`sender` — очередь сообщений: вся синхронизация спрятана
-внутри неё, а логика банкомата не знает о мьютексах вообще. `incoming.wait().handle<card_inserted>(lambda)` означает:
-«ждать сообщение типа `card_inserted` и обработать его; сообщения других типов
-игнорировать». Состояние `getting_pin` обрабатывает уже три типа сообщений —
-цифру, стирание и отмену (листинг 4.16):
-
-#### Листинг 4.16. Функция состояния getting_pin для простой реализации логики банкомата
-
-```cpp
-void atm::getting_pin() {
-    incoming.wait()
-        .handle<digit_pressed>(
-            [&](digit_pressed const& msg) {
-                unsigned const pin_length = 4;
-                pin += msg.digit;
-                if (pin.length() == pin_length) {
-                    bank.send(verify_pin(account, pin, incoming));
-                    state = &atm::verifying_pin;
-                }
-            })
-        .handle<clear_last_pressed>(
-            [&](clear_last_pressed const& msg) {
-                if (!pin.empty()) {
-                    pin.resize(pin.length() - 1);
-                }
-            })
-        .handle<cancel_pressed>(
-            [&](cancel_pressed const& msg) {
-                state = &atm::done_processing;
-            });
-}
-```
-
-Обрати внимание: получение цифры не обязательно меняет состояние — пока не
-набраны четыре цифры ПИН-кода, цикл снова вызывает `getting_pin()`, ожидая
-следующее сообщение. Так каждый прямоугольник на рисунке 4.3 превращается в
-функцию-состояние, а переходы — в смену `state`. Программировать такой поток —
-значит думать только о сообщениях: какие можно получить здесь и какие отправить
-дальше. Это модель **акторов**: каждый актор работает в своём потоке и общается
-с другими только через сообщения, без разделяемого изменяемого состояния.
-
-#### Продолжения и Concurrency TS
-
-В стандартной библиотеке C++17 фьючерсы «пассивные»: чтобы получить результат,
-поток сам вызывает `get()`/`wait()` и блокируется. Существует и более
-продвинутый подход — **продолжения** (continuations), которые живут в
-**Concurrency TS** (`std::experimental`): к фьючерсу прикрепляют функцию,
-которая запустится автоматически, когда фьючерс станет готовым, — и ни один
-поток при этом не блокируется.
-
-Концептуально это выражается одной фразой: «по готовности данных — обработай
-их». Метод, добавляющий продолжение, называется `then()`:
-
-```cpp
-std::experimental::future<int> fut = find_the_answer();
-auto fut2 = fut.then(find_the_question);
-assert(!fut.valid());   // исходный фьючерс опустошён
-assert(fut2.valid());   // фьючерс продолжения валиден
-```
-
-Обрати внимание на важный момент: `then()` возвращает **новый** фьючерс
-`fut2`, а исходный `fut` становится недействительным (`valid()` → `false`).
-Причина та же, что и у `get()` в обычном `std::future`: результат извлекается
-ровно один раз. Значение забирает продолжение, поэтому другому коду оно уже
-не достанется.
-
-Продолжению передаётся не значение напрямую, а готовый фьючерс:
-
-```cpp
-std::string find_the_question(std::experimental::future<int> the_answer);
-```
-
-Почему не разыменовать фьючерс и не передать `int`? Потому что фьючерс может
-содержать и исключение. Передав фьючерс, мы даём продолжению самому решить:
-вызвать `the_answer.get()` (тогда исключение распространится из продолжения
-и сохранится в его фьючерсе) или обработать его. Так исключения аккуратно
-текут по всей цепочке продолжений.
-
-**Где взять такой фьючерс?** В TS нет готового эквивалента `std::async`, но
-написать его несложно — на `std::experimental::promise` и отдельном потоке:
-
-#### Листинг 4.17. Простой эквивалент std::async для фьючерсов Concurrency TS
-
-```cpp
-template<typename Func>
-std::experimental::future<decltype(std::declval<Func>()())>
-spawn_async(Func&& func) {
-    std::experimental::promise<decltype(std::declval<Func>()())> p;
-    auto res = p.get_future();
-    std::thread t(
-        [p = std::move(p), f = std::decay_t<Func>(func)]() mutable {
-            try {
-                p.set_value_at_thread_exit(f());
-            } catch (...) {
-                p.set_exception_at_thread_exit(std::current_exception());
-            }
-        });
-    t.detach();
-    return res;
-}
-```
-
-Разбор деталей, на которые стоит обратить внимание:
-
-- тип результата выводится через `decltype(std::declval<Func>()())` — «тип,
-  который вернёт `func`, если её вызвать без аргументов»;
-- лямбда захватывает промис и функцию по значению (`p = std::move(p)`,
-  `f = std::decay_t<Func>(func)`) и помечена `mutable`, чтобы можно было
-  вызывать `set_value_at_thread_exit` — это не-const метод;
-- **`set_value_at_thread_exit`** / **`set_exception_at_thread_exit`** — особая
-  пара: значение (или исключение) устанавливается в фьючерс **в момент
-  завершения потока**, после разрушения `thread_local` переменных. Это
-  гарантирует, что к моменту готовности фьючерса локальные данные потока уже
-  корректно очищены;
-- `t.detach()` — поток выполняется в фоне, а фьючерс возвращается вызывающему.
-
-**Цепочки продолжений.** Классический пример — обработка входа
-пользователя. Сначала последовательная версия (всё в одном потоке, понятно,
-но блокирует поток на время каждого сетевого вызова):
-
-#### Листинг 4.18. Простая последовательная функция обработки входа зарегистрированного пользователя
-
-```cpp
-void process_login(std::string const& username, std::string const& password) {
-    try {
-        user_id const id = backend.authenticate_user(username, password);
-        user_data const info_to_display = backend.request_current_info(id);
-        update_display(info_to_display);
-    } catch (std::exception& e) {
-        display_error(e);
-    }
-}
-```
-
-Первое «улучшение» — всё это уходит в один фоновый поток через `std::async`:
-
-#### Листинг 4.19. Обработка входных данных пользователя с помощью одной асинхронной задачи
-
-```cpp
-std::future<void> process_login(
-    std::string const& username, std::string const& password) {
-    return std::async(std::launch::async, [=] {
-        try {
-            user_id const id = backend.authenticate_user(username, password);
-            user_data const info_to_display = backend.request_current_info(id);
-            update_display(info_to_display);
-        } catch (std::exception& e) {
-            display_error(e);
-        }
-    });
-}
-```
-
-Но у этого подхода есть минус: фоновый поток **блокируется**, пока ждёт каждый
-сетевой вызов. При множестве задач мы получаем много потоков, которые почти
-ничего не делают, кроме ожидания. Решение — разбить цепочку на продолжения,
-чтобы каждая следующая задача стартовала только по готовности предыдущей:
-
-#### Листинг 4.20. Функция обработки входных данных пользователя с продолжениями
-
-```cpp
-std::experimental::future<void> process_login(
-    std::string const& username, std::string const& password) {
-    return spawn_async([=] {
-        return backend.authenticate_user(username, password);
-    }).then([](std::experimental::future<user_id> id) {
-        return backend.request_current_info(id.get());
-    }).then([](std::experimental::future<user_data> info_to_display) {
-        try {
-            update_display(info_to_display.get());
-        } catch (std::exception& e) {
-            display_error(e);
-        }
-    });
-}
-```
-
-Теперь `spawn_async` запускает только аутентификацию; по её готовности
-запускается второе продолжение (запрос данных), и только когда те готовы —
-третье (обновление дисплея). Каждое продолжение получает фьючерс и вызывает
-`get()`, поэтому исключение из любого звена распространяется до конца цепочки
-и обрабатывается финальным блоком `catch`.
-
-Если серверные вызовы **сами** возвращают фьючерсы (`async_authenticate_user`
-→ `std::experimental::future<user_id>`), код почти не меняется благодаря
-**будущему разворачиванию** (future-unwrapping): если продолжение возвращает
-`future<some_type>`, то и `then()` возвращает `future<some_type>`, а не
-`future<future<some_type>>`:
-
-#### Листинг 4.21. Функция обработки входных данных пользователя с полностью асинхронными операциями
-
-```cpp
-std::experimental::future<void> process_login(
-    std::string const& username, std::string const& password) {
-    return backend.async_authenticate_user(username, password).then(
-        [](std::experimental::future<user_id> id) {
-            return backend.async_request_current_info(id.get());
-        }).then([](std::experimental::future<user_data> info_to_display) {
-            try {
-                update_display(info_to_display.get());
-            } catch (std::exception& e) {
-                display_error(e);
-            }
-        });
-}
-```
-
-Этот код по структуре почти повторяет последовательный [листинг 4.18], но ни
-один поток нигде не блокируется на сетевом вызове — вся цепочка планируется
-«по готовности». С обобщёнными лямбдами C++14 можно писать ещё короче:
-`.then([](auto id) { return backend.async_request_current_info(id.get()); })`.
-
-**`std::experimental::shared_future`** тоже поддерживает продолжения, причём
-у него может быть **несколько** продолжений (иначе два потока не смогли бы
-добавить свои продолжения без гонки). Продолжение получает
-`std::experimental::shared_future` (значение общее, поэтому его можно передать
-нескольким продолжениям):
-
-```cpp
-auto fut = spawn_async(some_function).share();
-auto fut2 = fut.then([](std::experimental::shared_future<some_data> data) {
-    do_stuff(data);
-});
-auto fut3 = fut.then([](std::experimental::shared_future<some_data> data) {
-    return do_other_stuff(data);
-});
-```
-
-Здесь `fut2` и `fut3` — обычные `std::experimental::future` (результаты
-продолжений не разделяются, пока это не сделано явно).
-
-**Ожидание набора фьючерсов.** Допустим, данные разбиты на чанки, каждый
-обработан асинхронно, и нужно собрать результаты. Обычный `std::future`-путь
-(листинг 4.22) порождает задачу-«агрегатор», которая по очереди `get()`-ает
-каждый фьючерс. Проблема: поток агрегатора просыпается по готовности каждого
-чанка, обнаруживает, что другие ещё не готовы, и засыпает снова — лишние
-переключения контекста.
-
-#### Листинг 4.22. Сбор результатов из фьючерсов с помощью std::async
-
-```cpp
-std::future<FinalResult> process_data(std::vector<MyData>& vec) {
-    size_t const chunk_size = whatever;
-    std::vector<std::future<ChunkResult>> results;
-    for (auto begin = vec.begin(), end = vec.end(); begin != end;) {
-        size_t const remaining_size = end - begin;
-        size_t const this_chunk_size = std::min(remaining_size, chunk_size);
-        results.push_back(
-            std::async(process_chunk, begin, begin + this_chunk_size));
-        begin += this_chunk_size;
-    }
-    return std::async([all_results = std::move(results)]() {
-        std::vector<ChunkResult> v;
-        v.reserve(all_results.size());
-        for (auto& f : all_results) {
-            v.push_back(f.get());
-        }
-        return gather_results(v);
-    });
-}
-```
-
-`std::experimental::when_all` решает это элегантно: он принимает набор фьючерсов
-и возвращает **один** фьючерс, который становится готовым, когда готовы **все**
-исходные. Дальше к нему можно прицепить продолжение — без отдельного
-ожидающего потока:
-
-#### Листинг 4.23. Сбор результатов из фьючерсов с использованием std::experimental::when_all
-
-```cpp
-std::experimental::future<FinalResult> process_data(
-    std::vector<MyData>& vec) {
-    size_t const chunk_size = whatever;
-    std::vector<std::experimental::future<ChunkResult>> results;
-    for (auto begin = vec.begin(), end = vec.end(); begin != end;) {
-        size_t const remaining_size = end - begin;
-        size_t const this_chunk_size = std::min(remaining_size, chunk_size);
-        results.push_back(
-            spawn_async(process_chunk, begin, begin + this_chunk_size));
-        begin += this_chunk_size;
-    }
-    return std::experimental::when_all(
-        results.begin(), results.end()).then(
-        [](std::future<std::vector<
-             std::experimental::future<ChunkResult>>> ready_results) {
-            std::vector<std::experimental::future<ChunkResult>>
-                all_results = ready_results.get();
-            std::vector<ChunkResult> v;
-            v.reserve(all_results.size());
-            for (auto& f : all_results) {
-                v.push_back(f.get());
-            }
-            return gather_results(v);
-        });
-}
-```
-
-Внутри продолжения `ready_results.get()` **не блокируется** — к этому моменту
-все фьючерсы уже готовы, потому что `when_all` сработал. Поэтому сборка идёт
-сразу. Разница с [листингом 4.22] — отсутствие потока, который просыпался бы
-по каждому чанку впустую.
-
-**`when_any`.** Обратная ситуация — нужно дождаться готовности **любого**
-фьючерса из набора. Пример — параллельный поиск значения в данных:
-несколько задач ищут по своим чанкам, и как только одна нашла — обрабатываем.
-`when_any` возвращает фьючерс со структурой `when_any_result`, где лежат все
-фьючерсы и `index` того, который сработал первым:
-
-#### Листинг 4.24. Использование std::experimental::when_any для обработки первого же найденного значения
-
-```cpp
-struct DoneCheck {
-    std::shared_ptr<std::experimental::promise<FinalResult>> final_result;
-
-    explicit DoneCheck(
-        std::shared_ptr<std::experimental::promise<FinalResult>> fr)
-        : final_result(std::move(fr)) {}
-
-    void operator()(
-        std::experimental::future<std::experimental::when_any_result<
-            std::vector<std::experimental::future<MyData*>>>> results_param) {
-        auto results = results_param.get();
-        MyData* const ready_result = results.futures[results.index].get();
-        if (ready_result) {
-            final_result->set_value(process_found_value(*ready_result));
-        } else {
-            results.futures.erase(results.futures.begin() + results.index);
-            if (!results.futures.empty()) {
-                std::experimental::when_any(
-                    results.futures.begin(), results.futures.end())
-                    .then(std::move(*this));
-            } else {
-                final_result->set_exception(
-                    std::make_exception_ptr(std::runtime_error("Not found")));
-            }
-        }
-    }
-};
-
-std::experimental::future<FinalResult>
-find_and_process_value(std::vector<MyData>& data) {
-    unsigned const concurrency = std::thread::hardware_concurrency();
-    unsigned const num_tasks = (concurrency > 0) ? concurrency : 2;
-    std::vector<std::experimental::future<MyData*>> results;
-    auto const chunk_size = (data.size() + num_tasks - 1) / num_tasks;
-    auto chunk_begin = data.begin();
-    std::shared_ptr<std::atomic<bool>> done_flag =
-        std::make_shared<std::atomic<bool>>(false);
-    for (unsigned i = 0; i < num_tasks; ++i) {
-        auto chunk_end =
-            (i < (num_tasks - 1)) ? chunk_begin + chunk_size : data.end();
-        results.push_back(std::experimental::async([=] {
-            for (auto entry = chunk_begin; !*done_flag && entry != chunk_end;
-                 ++entry) {
-                if (matches_find_criteria(*entry)) {
-                    *done_flag = true;
-                    return &*entry;
-                }
-            }
-            return (MyData*)nullptr;
-        }));
-        chunk_begin = chunk_end;
-    }
-    std::shared_ptr<std::experimental::promise<FinalResult>> final_result =
-        std::make_shared<std::experimental::promise<FinalResult>>();
-    std::experimental::when_any(results.begin(), results.end())
-        .then(DoneCheck(final_result));
-    return final_result->get_future();
-}
-```
-
-Идея:
-
-- запускается `num_tasks` задач; каждая ищет в своём чанке и, найдя значение,
-  ставит общий `done_flag` (чтобы остальные прекратили поиск) и возвращает
-  указатель на найденный элемент; если не нашла — `nullptr`;
-- `when_any(...).then(DoneCheck(...))` — как только любой фьючерс готов,
-  `DoneCheck` смотрит: нашёл ли кто-то значение. Если да — кладёт результат
-  в `final_result` (через `set_value`). Если нет — выбрасывает готовый фьючерс
-  из набора и, если фьючерсы остались, снова вызывает `when_any` (рекурсивно
-  через `std::move(*this)`); когда фьючерсов не осталось — кладёт исключение
-  `"Not found"` через `set_exception`.
-
-Такой рекурсивный `when_any`-поиск — характерный приём TS-стиля: обработка
-«первого готового» сама себя перепланирует, не блокируя потоков.
-
-Замечание про `when_all`/`when_any`: у обоих есть вариативная форма (передать
-фьючерсы прямо аргументами — результат будет содержать `std::tuple`), и обе
-принимают фьючерсы **по значению**, поэтому фьючерсы нужно перемещать в них
-(`std::move`).
-
-**Защёлки и барьеры.** Concurrency TS даёт ещё два примитива для ожидания
-«нескольких потоков в одной точке». Разница между ними принципиальная:
-
-- **Защёлка** (`std::experimental::latch`) — одноразовая: считает события вниз;
-  когда счётчик дошёл до нуля — состояние готовности фиксируется навсегда.
-  Считает неважно кто: один поток несколько раз или много потоков по одному.
-- **Барьер** (`std::experimental::barrier`) — переиспользуемый: каждый поток
-  «доходит» до барьера и ждёт остальных; когда собрались все — все освобождаются,
-  и барьер перезапускается для следующего цикла. Подходит для итеративных
-  фазовых вычислений.
-
-`std::experimental::latch` умеет `count_down()`, `wait()`, `is_ready()` и
-`count_down_and_wait()`. Классический сценарий (листинг 4.25): несколько задач
-параллельно готовят данные, а основной поток ждёт, пока все данные готовы,
-прежде чем начать их обрабатывать:
-
-#### Листинг 4.25. Ожидание наступления событий с использованием std::experimental::latch
-
-```cpp
-void foo() {
-    unsigned const thread_count = /* число потоков */;
-    latch done(thread_count);
-    my_data data[thread_count];
-    std::vector<std::future<void>> threads;
-    for (unsigned i = 0; i < thread_count; ++i) {
-        threads.push_back(std::async(std::launch::async, [&, i] {
-            data[i] = make_data(i);
-            done.count_down();   // данные готовы
-            do_more_stuff();     // дальше можно и подождать
-        }));
-    }
-    done.wait();   // ждём, пока все данные готовы
-    process_data(data, thread_count);
-}
-```
-
-Важные детали:
-
-- лямбда захватывает `i` **по значению** (иначе гонка за счётчик цикла), а
-  `data` и `done` — по ссылке (общие);
-- `done.wait()` возвращается, когда все задачи сделали `count_down()`, — то
-  есть когда все данные готовы. При этом задачи могут ещё выполнять
-  `do_more_stuff()` — это нормально, данные-то готовы;
-- `process_data` безопасен: `count_down()` в одной задаче синхронизируется с
-  `wait()` в основной — все изменения `data`, сделанные до `count_down()`,
-  гарантированно видны после `wait()` (формально это отношение
-  «синхронизируется с», подробно — в главе 5).
-
-`std::experimental::barrier` умеет `arrive_and_wait()` (дойти и ждать остальных)
-и `arrive_and_drop()` (покинуть группу — в следующем цикле барьер будет ждать
-на одного меньше). Пример (листинг 4.26) — обработка потока данных группой
-потоков: блок разбивается на чанки, каждый поток обрабатывает свой чанк,
-затем все синхронизируются на барьере, первый поток записывает результат,
-снова синхронизация — и так на каждом блоке:
-
-#### Листинг 4.26. Использование std::experimental::barrier
-
-```cpp
-void process_data(data_source& source, data_sink& sink) {
-    unsigned const concurrency = std::thread::hardware_concurrency();
-    unsigned const num_threads = (concurrency > 0) ? concurrency : 2;
-
-    std::experimental::barrier sync(num_threads);
-    std::vector<joining_thread> threads(num_threads);
-
-    std::vector<data_chunk> chunks;
-    result_block result;
-
-    for (unsigned i = 0; i < num_threads; ++i) {
-        threads[i] = joining_thread([&, i] {
-            while (!source.done()) {
-                if (!i) {   // только первый поток читает источник
-                    data_block current_block = source.get_next_data_block();
-                    chunks = divide_into_chunks(current_block, num_threads);
-                }
-                sync.arrive_and_wait();   // все ждут, пока блок разбит
-                result.set_chunk(i, num_threads, process(chunks[i]));
-                sync.arrive_and_wait();   // все ждут, пока обработан свой чанк
-                if (!i) {   // снова только первый пишет результат
-                    sink.write_data(std::move(result));
-                }
-            }
-        });
-    }
-}
-```
-
-Последовательные участки (чтение источника, запись результата) выполняет только
-поток с номером 0; остальные ждут на барьере. Барьер — это жёсткая линия:
-ни один поток не переступает её, пока все не готовы. Благодаря двум
-`arrive_and_wait()` на каждой итерации у всех потоков всегда согласованное
-состояние `chunks` и `result`.
-
-`std::experimental::flex_barrier` — гибкий вариант барьера: в конструктор
-помимо числа потоков передаётся **функция завершения**, которая запускается в
-одном потоке, когда все дошли до барьера (идеально для последовательных
-участков), и может изменить число потоков следующего цикла (вернуть `-1` —
-не менять, `0` и больше — новое число потоков). Пример (листинг 4.27):
-
-#### Листинг 4.27. Применение std::experimental::flex_barrier для выполнения области последовательного кода
-
-```cpp
-void process_data(data_source& source, data_sink& sink) {
-    unsigned const concurrency = std::thread::hardware_concurrency();
-    unsigned const num_threads = (concurrency > 0) ? concurrency : 2;
-
-    std::vector<data_chunk> chunks;
-
-    auto split_source = [&] {
-        if (!source.done()) {
-            data_block current_block = source.get_next_data_block();
-            chunks = divide_into_chunks(current_block, num_threads);
-        }
-    };
-
-    split_source();
-
-    result_block result;
-
-    std::experimental::flex_barrier sync(num_threads, [&] {
-        sink.write_data(std::move(result));   // последовательная область
-        split_source();                        // в конце каждого цикла
-        return -1;                             // число потоков не меняем
-    });
-    std::vector<joining_thread> threads(num_threads);
-
-    for (unsigned i = 0; i < num_threads; ++i) {
-        threads[i] = joining_thread([&, i] {
-            while (!source.done()) {
-                result.set_chunk(i, num_threads, process(chunks[i]));
-                sync.arrive_and_wait();
-            }
-        });
-    }
-}
-```
-
-В `flex_barrier` последовательный код вынесен в функцию завершения: запись
-результата и разбиение следующего блока происходят «внутри» барьера, когда
-все потоки уже дошли. Тело каждого потока упростилось до одного
-`process(chunks[i])` + `arrive_and_wait()`.
-
-Все перечисленные средства (продолжения, `when_all`/`when_any`, защёлки и
-барьеры) на момент C++17 живут в
-`std::experimental` и доступны не во всех компиляторах, поэтому в лабораториях
-мы их не используем (лабораторные программы собираются только стандартными
-примитивами C++17). В C++20 те же идеи вошли в стандарт как `std::latch` и
-`std::barrier`, но по правилам курса C++20+ API мы не применяем.
 
 ### Минимальные примеры
 
@@ -1255,6 +658,7 @@ if (f.wait_for(std::chrono::milliseconds(35)) == std::future_status::ready) {
 
 | Лаба | Тип | Суть одной строкой |
 |------|-----|--------------------|
-| [4.1. Производитель-потребитель](labs/lab-04-01-producer-consumer/task.md) | допиши TODO | потокобезопасная очередь с `condition_variable`: `wait` с предикатом и `notify_one` |
+| [4.1. Производитель-потребитель](labs/lab-04-01-producer-consumer/task.md) | допиши TODO | потокобезопасная очередь: потребитель дожидается данных, а не опрашивает в цикле |
 | [4.2. Параллельная сумма через async](labs/lab-04-02-async-parallel-sum/task.md) | напиши с нуля | разбей диапазон на блоки, запусти `std::async`, собери через `future.get()` |
 | [4.3. Почини broken_promise](labs/lab-04-03-promise-exception/task.md) | найди и почини | гарантируй установку значения/исключения в `std::promise` на всех путях |
+| [4.4. Задача через std::packaged_task](labs/lab-04-04-packaged-task/task.md) | напиши с нуля | упакуй функцию, получи фьючерс, выполни в потоке и забери результат |

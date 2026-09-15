@@ -6,26 +6,18 @@
 
 class threadsafe_queue {
 public:
-    // TODO 1: push(value) — lock_guard, data_queue_.push(value),
-    // затем data_cond_.notify_one() ПОСЛЕ снятия блокировки.
+    // TODO 1: положить значение в очередь и дать знать ждущему потребителю.
     void push(int value) { (void)value; }
 
-    // TODO 2: wait_and_pop(value) — unique_lock, data_cond_.wait(lk, предикат
-    // !data_queue_.empty()), затем value = front(); pop().
+    // TODO 2: если очередь пуста — дождаться появления элемента, затем извлечь его.
     void wait_and_pop(int& value) { (void)value; }
 
-    // TODO 3: try_pop(value) — lock_guard; пустая очередь → false;
-    // иначе value = front(); pop(); вернуть true.
+    // TODO 3: не дожидаясь, извлечь элемент; если очередь пуста — вернуть false.
     bool try_pop(int& value) { (void)value; return false; }
-
-    bool empty() const {
-        std::lock_guard<std::mutex> lk(mut_);
-        return data_queue_.empty();
-    }
 
 private:
     std::queue<int> data_queue_;
-    mutable std::mutex mut_;
+    std::mutex mut_;
     std::condition_variable data_cond_;
 };
 

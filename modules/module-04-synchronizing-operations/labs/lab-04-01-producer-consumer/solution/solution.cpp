@@ -29,14 +29,9 @@ public:
         return true;
     }
 
-    bool empty() const {
-        std::lock_guard<std::mutex> lk(mut_);
-        return data_queue_.empty();
-    }
-
 private:
     std::queue<int> data_queue_;
-    mutable std::mutex mut_;
+    std::mutex mut_;
     std::condition_variable data_cond_;
 };
 

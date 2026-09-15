@@ -12,7 +12,7 @@
 ### ESTABLISHED (high confidence)
 
 1. **База курса** — курс по «C++ Concurrency in Action», 2-е изд. (Уильямс, 2020). [stated]
-2. **Стандарт C++17 / материал книги** — код в основном C++17. В курс входит то, что есть в книге, а не жёстко только C++17: где книга рассматривает Concurrency TS (`std::experimental::future`, продолжения `then()`, `when_all`/`when_any`, `latch`, `barrier`, `flex_barrier`) — этот материал тоже встречается в курсе (лекционно; для лаб — примитивы, которые гарантированно компилируются). Запрещено всё из C++20+: `std::jthread`, `std::counting_semaphore`, `std::barrier`, `std::latch`, корутины, `std::format`. [stated]
+2. **Стандарт C++17** — код в основном C++17. Запрещено всё из C++20+: `std::jthread`, `std::counting_semaphore`, `std::barrier`, `std::latch`, корутины, `std::format`. Материал **Concurrency TS** (`std::experimental`: `future` с продолжениями `then()`, `when_all`/`when_any`, `latch`, `barrier`, `flex_barrier`, `atomic_shared_ptr`) в курс **не входит** (решено 2026-09-15). [stated]
 3. **Аудитория** — уверенно знает C++ (RAII, шаблоны, STL, умные указатели); многопоточность НЕ знает. [stated]
 4. **Memory ordering / lock-free** — включены полностью, на строго корректном интуитивном уровне: happens-before, acquire/release, seq_cst, relaxed, CAS, ABA. [stated]
 5. **Язык** — курс на русском, файлы UTF-8; в коде английские имена из `std`. [stated]
@@ -70,6 +70,7 @@
 | 2026-09-09 | Updated | A016 | Формат вставки рисунков: markdown-изображение `![рис N.M](../../source/images/N.M.png)` вместо текстового маркера |
 | 2026-09-09 | Updated | A006 | Антиплагиат смягчён: совпадения допустимы, если передают смысл; не переписывать каждый абзац |
 | 2026-09-09 | Updated | A006 | Каталог книги называется `source` (не `sources`); исправлены пути в скиллах/AUTHORING/.gitignore |
+| 2026-09-15 | Updated | A002 | Материал Concurrency TS полностью исключён из курса (удалён раздел в модуле 4 и упоминания в модулях 5, 7) |
 
 ---
 
