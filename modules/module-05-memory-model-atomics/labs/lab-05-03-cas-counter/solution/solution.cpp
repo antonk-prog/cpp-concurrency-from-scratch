@@ -8,14 +8,14 @@ class atomic_counter {
 public:
     void increment() {
         int expected = value_.load();
-        while (!value_.compare_exchange_weak(expected, expected + 1)) {
+        while (!value_.compare_exchange_strong(expected, expected + 1)) {
             // expected обновлён неудачной попыткой; пробуем снова
         }
     }
 
     void decrement() {
         int expected = value_.load();
-        while (!value_.compare_exchange_weak(expected, expected - 1)) {
+        while (!value_.compare_exchange_strong(expected, expected - 1)) {
             // expected обновлён неудачной попыткой; пробуем снова
         }
     }
