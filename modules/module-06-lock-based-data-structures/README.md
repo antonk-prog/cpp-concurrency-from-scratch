@@ -704,6 +704,13 @@ void threadsafe_queue<T>::push(T new_value) {
 
 ```cpp
 template <typename T>
+std::unique_ptr<node> threadsafe_queue<T>::pop_head() {
+    std::unique_ptr<node> old_head = std::move(head);
+    head = std::move(old_head->next);
+    return old_head;
+}
+
+template <typename T>
 std::unique_lock<std::mutex> threadsafe_queue<T>::wait_for_data() {
     std::unique_lock<std::mutex> head_lock(head_mutex);
     data_cond.wait(head_lock, [&] { return head.get() != get_tail(); });
@@ -786,6 +793,25 @@ bool threadsafe_queue<T>::empty() {
     return head.get() == get_tail();
 }
 ```
+
+Обрати внимание: `pop_head()` здесь уже **не та**, что в листинге 6.6. Из неё
+исчезли захват `head_mutex` и проверка пустоты — теперь она только снимает
+головной узел и возвращает его:
+
+```cpp
+std::unique_ptr<node> pop_head() {
+    std::unique_ptr<node> old_head = std::move(head);
+    head = std::move(old_head->next);
+    return old_head;
+}
+```
+
+Почему так: `wait_pop_head()` и `try_pop_head()` вызывают `pop_head()`, уже
+**удерживая** `head_mutex` (его захватывают `wait_for_data()` и локальная
+`head_lock`). Если бы `pop_head()` блокировала мьютекс повторно, один и тот же
+поток захватил бы нерекурсивный мьютекс дважды — а это дедлок. Проверка пустоты
+тоже переехала к вызывающим: `wait_for_data()` проверяет `head != get_tail()`
+в предикате, а `try_pop_head()` — до вызова `pop_head()`.
 
 Это финальная версия очереди — неограниченная: потоки могут добавлять значения,
 пока есть память. Существует и ограниченная очередь с фиксированной максимальной
