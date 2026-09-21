@@ -1233,3 +1233,4 @@ public:
 | [6.1. Почини гонку в очереди с детализацией](labs/lab-06-01-fine-grained-queue/task.md) | найди и почини | исправь `get_tail()` вне блокировки `head_mutex` — head «перескакивает» за tail |
 | [6.2. Потокобезопасная поисковая таблица](labs/lab-06-02-threadsafe-lookup-table/task.md) | допиши TODO | допиши методы бакета `value_for`/`add_or_update_mapping`/`remove_mapping` на `shared_mutex` |
 | [6.3. Список с эстафетной блокировкой](labs/lab-06-03-threadsafe-list/task.md) | напиши с нуля | реализуй `for_each`/`find_first_if`/`remove_if` с мьютексом на узел |
+| [6.4. Пробуждение при исключении](labs/lab-06-04-notify-on-exception/task.md) | допиши TODO | `notify_one()` в `wait_and_pop` на случай исключения, чтобы элемент не «потерялся» для ожидающих |
