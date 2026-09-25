@@ -297,18 +297,28 @@ public:
 `res.swap(old_head->data)` выгружает данные из узла до его (отложенного)
 удаления: если узел ещё жив, данные уже не удерживаются им.
 
-Механизм утилизации `try_reclaim()` (листинг 7.5): если счётчик равен 1 —
-мы единственные в pop(), можно удалить и текущий узел, и весь список
-отложенного удаления; иначе узел добавляется в список отложенного удаления,
-а счётчик уменьшается. Список формируется через CAS по голове `to_be_deleted`
-(та же схема, что в push стека).
+Механизм утилизации `try_reclaim()` (полная версия стека собрана в листинге 7.5):
+если счётчик равен 1 — мы единственные в pop(), можно удалить и текущий узел,
+и весь список отложенного удаления; иначе узел добавляется в список отложенного
+удаления, а счётчик уменьшается. Список формируется через CAS по голове
+`to_be_deleted` (та же схема, что в push стека).
 
-#### Листинг 7.5. Механизм утилизации памяти на основе подсчёта потоков
+#### Листинг 7.5. Полный стек с механикой отложенного удаления
 
 ```cpp
 template <typename T>
 class lock_free_stack {
-    std::atomic<node*> to_be_deleted;
+    struct node {
+        std::shared_ptr<T> data;
+        node* next;
+        explicit node(T const& v) : data(std::make_shared<T>(v)), next(nullptr) {}
+    };
+
+    std::atomic<node*> head{nullptr};
+    std::atomic<unsigned> threads_in_pop{0};
+    std::atomic<node*> to_be_deleted{nullptr};
+
+    // ---------- вспомогательные функции ----------
 
     static void delete_nodes(node* nodes) {
         while (nodes) {
@@ -318,24 +328,94 @@ class lock_free_stack {
         }
     }
 
+    // Добавить ОДИН узел в список отложенного удаления
+    void chain_pending_node(node* n) {
+        // n->next будет использован как "следующий в списке отложенных",
+        // поэтому его надо перезаписать, а старое значение уже не нужно —
+        // узел всё равно извлечён из стека.
+        while (!try_chain_pending_node(n)) {}
+    }
+
+    bool try_chain_pending_node(node* n) {
+        node* old_list = to_be_deleted.load(std::memory_order_relaxed);
+        n->next = old_list;   // n указывает на старую голову списка
+        return to_be_deleted.compare_exchange_weak(
+            old_list, n,
+            std::memory_order_release,
+            std::memory_order_relaxed);
+    }
+
+    // Добавить ЦЕЛЫЙ список узлов (уже связанный через next) в отложенные
+    void chain_pending_nodes(node* nodes) {
+        // Найти хвост списка nodes
+        node* last = nodes;
+        while (last->next) last = last->next;
+
+        // Прицепить хвост к текущему to_be_deleted через CAS-цикл
+        node* old_list = to_be_deleted.load(std::memory_order_relaxed);
+        do {
+            last->next = old_list;
+        } while (!to_be_deleted.compare_exchange_weak(
+            old_list, nodes,
+            std::memory_order_release,
+            std::memory_order_relaxed));
+    }
+
+    // ---------- try_reclaim ----------
+
     void try_reclaim(node* old_head) {
-        if (threads_in_pop == 1) {              // мы единственные в pop()
-            node* nodes_to_delete = to_be_deleted.exchange(nullptr);
-            if (!--threads_in_pop) {
-                delete_nodes(nodes_to_delete);
+        if (threads_in_pop == 1) {                       // (A)
+            node* nodes_to_delete = to_be_deleted.exchange(nullptr);   // (B)
+            if (!--threads_in_pop) {                     // (C)
+                delete_nodes(nodes_to_delete);           // (D)
             } else if (nodes_to_delete) {
-                chain_pending_nodes(nodes_to_delete);
+                chain_pending_nodes(nodes_to_delete);    // (E)
             }
-            delete old_head;
+            delete old_head;                             // (F)
         } else {
-            chain_pending_node(old_head);
-            --threads_in_pop;
+            // pop() может быть вызван на пустом стеке: old_head == nullptr
+            if (old_head) {                              // (G)
+                chain_pending_node(old_head);
+            }
+            --threads_in_pop;                            // (H)
         }
     }
-    // chain_pending_nodes / chain_pending_node — добавление узлов
-    // в список отложенного удаления через CAS по to_be_deleted
+
+public:
+    void push(T const& value) {
+        node* const new_node = new node(value);
+        new_node->next = head.load(std::memory_order_relaxed);
+        while (!head.compare_exchange_weak(new_node->next, new_node,
+                                           std::memory_order_release,
+                                           std::memory_order_relaxed)) {}
+    }
+
+    std::shared_ptr<T> pop() {
+        ++threads_in_pop;                                // (1)
+        node* old_head = head.load();                    // (2)
+        while (old_head &&
+               !head.compare_exchange_weak(old_head, old_head->next)) {}  // (3)
+
+        std::shared_ptr<T> res;
+        if (old_head) {
+            res.swap(old_head->data);                    // (4)
+        }
+        try_reclaim(old_head);                           // (5)
+        return res;
+    }
 };
 ```
+
+Обратите внимание на защиту `if (old_head)` в ветке (G). `pop()` может быть
+вызван на пустом стеке — тогда `old_head == nullptr`, но `try_reclaim()`
+вызываться всё равно обязан: поток должен уменьшить счётчик, а если он
+единственный в pop() — забрать и удалить накопившийся список отложенных
+узлов. В ветке «мы одни» это безопасно: `delete nullptr` — корректный no-op.
+А вот `chain_pending_node(nullptr)` был бы UB: `n->next = old_list` в
+`try_chain_pending_node()` записала бы по адресу `nullptr + offset(next)`.
+Поэтому без проверки два потока, одновременно вызывающие `pop()` на пустом
+стеке, роняли бы программу (`nodes_to_delete` в ветке (E) уже защищён проверкой,
+а здесь защита добавлена явно).
 
 Почему счётчик нужно проверять **после** захвата списка `exchange`? На рисунке 7.1
 показана коварная ситуация: пока поток А читает счётчик, поток B заходит
@@ -353,11 +433,13 @@ class lock_free_stack {
 
 Как формируется список отложенного удаления? Узлы связываются через их же поле
 `next` (оно к этому моменту уже не используется для основной очереди/стека).
-`chain_pending_nodes(first, last)` прикрепляет цепочку к голове `to_be_deleted`
-через CAS: `last->next = to_be_deleted; while (!to_be_deleted.compare_exchange_weak(last->next, first)) {}`.
-Если за это время другой поток изменил голову списка — CAS обновит `last->next`
-и цикл повторится. Добавление одного узла — частный случай, когда первый узел
-цепочки совпадает с последним.
+`chain_pending_node()` добавляет одиночный узел: `try_chain_pending_node()`
+читает текущую голову `to_be_deleted`, прицепляет её к узлу (`n->next = old_list`)
+и CAS'ом ставит узел новой головой; при неудаче (голова изменилась) цикл
+повторяется. `chain_pending_nodes()` добавляет целую цепочку за один CAS:
+сначала находится хвост переданного списка, затем `last->next` указывается на
+текущую голову, а CAS заменяет голову `to_be_deleted` на первый узел цепочки
+— сравнение с актуальным значением повторяется в цикле.
 
 У этого подхода есть слабость: в условиях высокой загруженности «затишья»
 (момента, когда счётчик равен 1) может не быть, и список отложенного удаления
