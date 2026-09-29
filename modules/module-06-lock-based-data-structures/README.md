@@ -724,13 +724,6 @@ std::unique_ptr<node> threadsafe_queue<T>::wait_pop_head() {
 }
 
 template <typename T>
-std::unique_ptr<node> threadsafe_queue<T>::wait_pop_head(T& value) {
-    std::unique_lock<std::mutex> head_lock(wait_for_data());
-    value = std::move(*head->data);
-    return pop_head();
-}
-
-template <typename T>
 std::shared_ptr<T> threadsafe_queue<T>::wait_and_pop() {
     std::unique_ptr<node> const old_head = wait_pop_head();
     return old_head->data;
